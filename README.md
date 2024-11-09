@@ -16,8 +16,8 @@ HW: A node consists of two **Intel Xeon Gold 5220R** processors, each with **24 
 ## Installation 
 After installing all prerequisites: 
 - Clone this repo
-- then run: make
-- then: make install (not ready yet)
+- make
+- make install **(not ready yet)**
 
 ## Uninstalling 
 
