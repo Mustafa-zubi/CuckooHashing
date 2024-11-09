@@ -4,7 +4,7 @@ In this project we present two hashing techniques, namely Cuckoo Hashing and Rob
 
 ![Project pipeline chart](docs/pipeline.png)
 
-## Prequists
+## Prerequisites
 
 - C++17 (The project is developed using this version, but it should be compatible with other C++ versions. Ensure library compatibility according to your C++17)
 - C++ libzmq https://github.com/zeromq/zmqpp
