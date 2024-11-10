@@ -2,18 +2,15 @@
 #include <iostream>
 #include <cstring>
 
-// to avoid any missunderstading, this is a ZMQ subscription client that is acting as 
+// to avoid any missunderstading, this is a ZMQ subscription client
 // but acting as data receiver server. Thats why it is called ZMQSubServer.
 
 ZMQSubServer::ZMQSubServer(const std::string& address) {
-    // Initialize the ZeroMQ context
     context = zmq_ctx_new();
     if (!context) {
         std::cerr << "Failed to create ZeroMQ context" << std::endl;
         throw std::runtime_error("Failed to create ZeroMQ context");
     }
-
-    // Create a socket of type REP (reply)
     socket = zmq_socket(context, ZMQ_SUB);
     if (!socket) {
         zmq_ctx_destroy(context);
