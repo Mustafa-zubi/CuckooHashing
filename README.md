@@ -24,3 +24,10 @@ After installing all prerequisites:
 To uninstall this code from your system: 
 -  make clean or make distclean
 -  make uninstall (not ready yet)
+
+## How to run: 
+
+After compiling and with reference to the pipeline above, the idea is to send data in real-time using ZMQ to both Cuckoo Hashing and Robin Hood. For this, we primarily need to run two software applications:
+
+- main (./main): Responsible for preparing Cuckoo Hashing and Robin Hood to receive data and build their hash tables.
+- dataSender (./dataSender): Responsible for retrieving data from the Marsaglia CD-ROM and streaming it to both hashing algorithms.
