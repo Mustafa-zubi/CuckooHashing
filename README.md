@@ -7,7 +7,6 @@ In this project we present two hashing techniques, namely Cuckoo Hashing and Rob
 ## Prerequisites
 
 - C++17 (The project is developed using this version, but it should be compatible with other C++ versions)
-- C++ libzmq https://github.com/zeromq/zmqpp
 - More will be added as required while developing the code 
 
 ## Working environment: 
@@ -27,7 +26,20 @@ To uninstall this code from your system:
 
 ## How to run: 
 
-After compiling and with reference to the pipeline above, the idea is to send data in real-time using ZMQ to both Cuckoo Hashing and Robin Hood. For this, we primarily need to run two software applications:
+After compiling, use the standalone benchmark to read values directly from the Marsaglia CD-ROM files and exercise cuckoo hashing without messaging overhead in the timing path.
 
-- main (./main): Responsible for preparing Cuckoo Hashing and Robin Hood to receive data and build their hash tables.
-- dataSender (./dataSender): Responsible for retrieving data from the Marsaglia CD-ROM and streaming it to both hashing algorithms.
+- `benchmark` (`./benchmark`): Reads 32-bit values directly from the Marsaglia CD-ROM files and exercises cuckoo hashing without messaging overhead in the timing path.
+
+Example:
+
+```bash
+./benchmark DiehardCDROM-master/CD-ROM/bits.01 10000 5000 32768 64
+```
+
+Arguments:
+
+- input file path
+- number of initial keys to load
+- number of mixed-operation cycles
+- table size per cuckoo table
+- maximum displacement loop count before rehash
