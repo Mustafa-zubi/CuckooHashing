@@ -17,9 +17,10 @@ using std::swap;
 using std::vector;
 
 constexpr uint32_t CuckooHashing::EMPTY_SLOT;
+constexpr std::size_t CuckooHashing::MULTIPLIERS_PER_HASH;
 
-CuckooHashing::CuckooHashing(int requestedTableSize, int maxRehashLimit)
-    : maxRehashLimit(maxRehashLimit),
+CuckooHashing::CuckooHashing(int requestedTableSize, int maxLoop)
+    : maxLoop(maxLoop),
       tableSize(nextPowerOfTwo(requestedTableSize)),
       tableBits(computeTableBits(nextPowerOfTwo(requestedTableSize))),
       randomNumGen(randomDevice()),
@@ -28,14 +29,18 @@ CuckooHashing::CuckooHashing(int requestedTableSize, int maxRehashLimit)
       successfulInsertions(0),
       duplicateInsertions(0),
       rehashCount(0),
+      grewOnForcedRehash(0),
       failedInsertions(0),
       insertionsSinceRehash(0),
-      displacementCount(0) {
+      displacementCount(0),
+      lastInsertCellAccesses(0),
+      insertCellAccessSum(0),
+      sampledInsertCount(0) {
     if (requestedTableSize <= 0) {
         throw std::invalid_argument("tableSize must be positive");
     }
-    if (maxRehashLimit <= 0) {
-        throw std::invalid_argument("maxRehashLimit must be positive");
+    if (maxLoop <= 0) {
+        throw std::invalid_argument("maxLoop must be positive");
     }
 
     T1.assign(tableSize, EMPTY_SLOT);
@@ -43,11 +48,9 @@ CuckooHashing::CuckooHashing(int requestedTableSize, int maxRehashLimit)
     initializeHashParameters();
 }
 
-CuckooHashing::~CuckooHashing() {
-    std::cout << "CuckooHashing destructor called" << std::endl;
-}
+CuckooHashing::~CuckooHashing() = default;
 
-int CuckooHashing::computeTableBits(int size) const {
+int CuckooHashing::computeTableBits(int size) {
     int bits = 0;
     int value = size;
     while (value > 1) {
@@ -57,7 +60,7 @@ int CuckooHashing::computeTableBits(int size) const {
     return bits;
 }
 
-int CuckooHashing::nextPowerOfTwo(int value) const {
+int CuckooHashing::nextPowerOfTwo(int value) {
     int result = 1;
     while (result < value) {
         result <<= 1;
@@ -65,47 +68,57 @@ int CuckooHashing::nextPowerOfTwo(int value) const {
     return result;
 }
 
-uint32_t CuckooHashing::normalizeKey(int key) const {
+uint32_t CuckooHashing::normalizeKey(int key) {
     if (key <= 0) {
-        throw std::invalid_argument("MZ1 -- in ref to paper, it uses positive 32-bit signed keys and reserves 0 as empty");
+        throw std::invalid_argument("CuckooHashing uses positive 32-bit signed keys; 0 is reserved as empty");
     }
     return static_cast<uint32_t>(key);
 }
 
-uint64_t CuckooHashing::randomCoefficient() {
-    std::uniform_int_distribution<uint64_t> distribution(0, UNIVERSAL_HASH_PRIME - 1);
-    return distribution(randomNumGen);
+uint64_t CuckooHashing::randomOddMultiplier() {
+    std::uniform_int_distribution<uint64_t> distribution(
+        1, std::numeric_limits<uint64_t>::max());
+    return distribution(randomNumGen) | 1ULL;
 }
 
-uint32_t CuckooHashing::polynomialUniversalHash(
+uint32_t CuckooHashing::multiplicativeHash(
     uint32_t key,
-    const array<uint64_t, UNIVERSAL_HASH_COEFFICIENTS>& coefficients) const {
-    uint64_t result = 0;
-    uint64_t power = 1;
-    const uint64_t normalizedKey = key;
-
-    for (uint64_t coefficient : coefficients) {
-        result = (result + ((coefficient * power) % UNIVERSAL_HASH_PRIME)) % UNIVERSAL_HASH_PRIME;
-        power = (power * normalizedKey) % UNIVERSAL_HASH_PRIME;
+    const array<uint64_t, MULTIPLIERS_PER_HASH>& multipliers) const {
+    if (tableBits == 0) {
+        return 0;
     }
 
-    return static_cast<uint32_t>(result % static_cast<uint64_t>(tableSize));
+    
+    const unsigned shift = 64u - static_cast<unsigned>(tableBits);
+    const uint64_t k = static_cast<uint64_t>(key);
+    uint64_t accumulator = 0;
+    for (std::size_t i = 0; i < MULTIPLIERS_PER_HASH; ++i) {
+        accumulator ^= (multipliers[i] * k) >> shift;
+    }
+    return static_cast<uint32_t>(accumulator & ((1ULL << tableBits) - 1ULL));
 }
 
 void CuckooHashing::initializeHashParameters() {
-    for (std::size_t i = 0; i < hash1Coefficients.size(); ++i) {
-        hash1Coefficients[i] = randomCoefficient();
-        hash2Coefficients[i] = randomCoefficient();
+    for (std::size_t i = 0; i < MULTIPLIERS_PER_HASH; ++i) {
+        hash1Multipliers[i] = randomOddMultiplier();
+        hash2Multipliers[i] = randomOddMultiplier();
     }
 }
 
-int CuckooHashing::hashFunc1(int key) {
-    const uint32_t normalizedKey = normalizeKey(key); //MZ1 
-    return static_cast<int>(polynomialUniversalHash(normalizedKey, hash1Coefficients));
+int CuckooHashing::hash1Of(uint32_t key) const {
+    return static_cast<int>(multiplicativeHash(key, hash1Multipliers));
 }
+
+int CuckooHashing::hash2Of(uint32_t key) const {
+    return static_cast<int>(multiplicativeHash(key, hash2Multipliers));
+}
+
+int CuckooHashing::hashFunc1(int key) {
+    return hash1Of(normalizeKey(key));
+}
+
 int CuckooHashing::hashFunc2(int key) {
-    const uint32_t normalizedKey = normalizeKey(key);
-    return static_cast<int>(polynomialUniversalHash(normalizedKey, hash2Coefficients));
+    return hash2Of(normalizeKey(key));
 }
 
 void CuckooHashing::print(string table, int index) {
@@ -124,15 +137,15 @@ void CuckooHashing::print(string table, int index) {
 }
 
 void CuckooHashing::printTables() {
-    cout << "T1: ";
+    cout << "T1:";
     for (uint32_t value : T1) {
-        cout << value << ' ';
+        cout << ' ' << value;
     }
     cout << endl;
 
-    cout << "T2: ";
+    cout << "T2:";
     for (uint32_t value : T2) {
-        cout << value << ' ';
+        cout << ' ' << value;
     }
     cout << endl;
 }
@@ -141,151 +154,207 @@ bool CuckooHashing::search(int key) {
     if (key <= 0) {
         return false;
     }
+    const uint32_t k = static_cast<uint32_t>(key);
+    return T1[hash1Of(k)] == k || T2[hash2Of(k)] == k;
+}
 
-    const uint32_t normalizedKey = static_cast<uint32_t>(key);
-    return T1[hashFunc1(key)] == normalizedKey || T2[hashFunc2(key)] == normalizedKey;
+bool CuckooHashing::placeKeyInLoop(uint32_t key) {
+    
+    uint32_t current = key;
+    bool placeInT1 = true;
+
+    for (int step = 0; step < maxLoop; ++step) {
+        
+        if (step > 0) {
+            ++lastInsertCellAccesses;
+        }
+        if (placeInT1) {
+            const int idx = hash1Of(current);
+            if (T1[idx] == EMPTY_SLOT) {
+                T1[idx] = current;
+                return true;
+            }
+            ++displacementCount;
+            swap(current, T1[idx]);
+        } else {
+            const int idx = hash2Of(current);
+            if (T2[idx] == EMPTY_SLOT) {
+                T2[idx] = current;
+                return true;
+            }
+            ++displacementCount;
+            swap(current, T2[idx]);
+        }
+        placeInT1 = !placeInT1;
+    }
+
+    return false;
 }
 
 void CuckooHashing::insert(int key) {
     ++insertAttempts;
+    const uint32_t k = normalizeKey(key);
 
-    const uint32_t normalizedKey = normalizeKey(key);
-
-    if (search(key)) {
+    lastInsertCellAccesses = 0;
+    const int i1 = hash1Of(k);
+    ++lastInsertCellAccesses;
+    if (T1[i1] == k) {
         ++duplicateInsertions;
+        insertCellAccessSum += lastInsertCellAccesses;
+        ++sampledInsertCount;
+        return;
+    }
+    const int i2 = hash2Of(k);
+    ++lastInsertCellAccesses;
+    if (T2[i2] == k) {
+        ++duplicateInsertions;
+        insertCellAccessSum += lastInsertCellAccesses;
+        ++sampledInsertCount;
         return;
     }
 
-    maybeForceRefreshRehash();
 
-    if (placeKeyWithoutRehash(normalizedKey)) {
+    const long long r = static_cast<long long>(tableSize);
+    if (insertionsSinceRehash >= r * r) {
+        const vector<uint32_t> keys = collectKeys();
+        if (!rebuildTablesWithKeys(keys)) {
+
+            resizeTables(tableSize * 2);
+            const vector<uint32_t> grown = collectKeys();
+            if (!rebuildTablesWithKeys(grown)) {
+                throw std::runtime_error("CuckooHashing: r^2 refresh failed after grow");
+            }
+        }
+    }
+
+    if (placeKeyInLoop(k)) {
         ++elementCount;
         ++successfulInsertions;
         ++insertionsSinceRehash;
+        insertCellAccessSum += lastInsertCellAccesses;
+        ++sampledInsertCount;
         return;
     }
 
-    if (!rehashWithPendingKey(normalizedKey)) {
+    if (!forcedRehashWithPendingKey(k)) {
         ++failedInsertions;
-        throw std::runtime_error("Failed to insert key after rehash attempts");
+        throw std::runtime_error("CuckooHashing: insertion failed after forced rehash/grow");
     }
 
     ++elementCount;
     ++successfulInsertions;
     ++insertionsSinceRehash;
+
+}
+
+long long CuckooHashing::getLastInsertCellAccesses() const {
+    return lastInsertCellAccesses;
+}
+
+double CuckooHashing::getAverageInsertCellAccesses() const {
+    return sampledInsertCount == 0
+               ? 0.0
+               : static_cast<double>(insertCellAccessSum) /
+                     static_cast<double>(sampledInsertCount);
+}
+
+void CuckooHashing::resetInsertCellAccessStats() {
+    lastInsertCellAccesses = 0;
+    insertCellAccessSum = 0;
+    sampledInsertCount = 0;
 }
 
 void CuckooHashing::remove(int key) {
     if (key <= 0) {
         return;
     }
+    const uint32_t k = static_cast<uint32_t>(key);
 
-    const uint32_t normalizedKey = static_cast<uint32_t>(key);
-
-    const int index1 = hashFunc1(key);
-    if (T1[index1] == normalizedKey) {
-        T1[index1] = EMPTY_SLOT;
+    const int i1 = hash1Of(k);
+    if (T1[i1] == k) {
+        T1[i1] = EMPTY_SLOT;
         --elementCount;
         return;
     }
 
-    const int index2 = hashFunc2(key);
-    if (T2[index2] == normalizedKey) {
-        T2[index2] = EMPTY_SLOT;
+    const int i2 = hash2Of(k);
+    if (T2[i2] == k) {
+        T2[i2] = EMPTY_SLOT;
         --elementCount;
     }
-}
-
-bool CuckooHashing::placeKeyWithoutRehash(uint32_t key) {
-    uint32_t currentKey = key;
-    bool placeInFirstTable = true;
-
-    for (int loopCount = 0; loopCount < maxRehashLimit; ++loopCount) {
-        if (placeInFirstTable) {
-            const int index = hashFunc1(static_cast<int>(currentKey));
-            if (T1[index] == EMPTY_SLOT) {
-                T1[index] = currentKey;
-                return true;
-            }
-            ++displacementCount;
-            swap(currentKey, T1[index]);
-        } else {
-            const int index = hashFunc2(static_cast<int>(currentKey));
-            if (T2[index] == EMPTY_SLOT) {
-                T2[index] = currentKey;
-                return true;
-            }
-            ++displacementCount;
-            swap(currentKey, T2[index]);
-        }
-
-        placeInFirstTable = !placeInFirstTable;
-    }
-
-    return false;
 }
 
 vector<uint32_t> CuckooHashing::collectKeys() const {
     vector<uint32_t> keys;
     keys.reserve(static_cast<std::size_t>(elementCount));
-
-    for (uint32_t value : T1) {
-        if (value != EMPTY_SLOT) {
-            keys.push_back(value);
-        }
+    for (uint32_t v : T1) {
+        if (v != EMPTY_SLOT) keys.push_back(v);
     }
-
-    for (uint32_t value : T2) {
-        if (value != EMPTY_SLOT) {
-            keys.push_back(value);
-        }
+    for (uint32_t v : T2) {
+        if (v != EMPTY_SLOT) keys.push_back(v);
     }
-
     return keys;
 }
 
-bool CuckooHashing::rebuildTablesWithKeys(const vector<uint32_t>& keys) {
-    for (int attempt = 0; attempt < maxRehashLimit; ++attempt) {
-        vector<uint32_t> newT1(tableSize, EMPTY_SLOT);
-        vector<uint32_t> newT2(tableSize, EMPTY_SLOT);
+void CuckooHashing::resizeTables(int newTableSize) {
+    tableSize = newTableSize;
+    tableBits = computeTableBits(newTableSize);
+    T1.assign(tableSize, EMPTY_SLOT);
+    T2.assign(tableSize, EMPTY_SLOT);
+    elementCount = 0;
+}
 
+bool CuckooHashing::rebuildTablesWithKeys(const vector<uint32_t>& keys) {
+
+    for (int attempt = 0; attempt < maxLoop; ++attempt) {
+        std::fill(T1.begin(), T1.end(), EMPTY_SLOT);
+        std::fill(T2.begin(), T2.end(), EMPTY_SLOT);
+        elementCount = 0;
         ++rehashCount;
         initializeHashParameters();
-        T1.swap(newT1);
-        T2.swap(newT2);
 
-        bool success = true;
-        for (uint32_t storedKey : keys) {
-            if (!placeKeyWithoutRehash(storedKey)) {
-                success = false;
+        bool allPlaced = true;
+        for (uint32_t k : keys) {
+            if (!placeKeyInLoop(k)) {
+                allPlaced = false;
                 break;
             }
+            ++elementCount;
         }
 
-        if (success) {
+        if (allPlaced) {
             insertionsSinceRehash = 0;
             return true;
         }
     }
-
     return false;
 }
 
-bool CuckooHashing::rehashWithPendingKey(uint32_t key) {
+bool CuckooHashing::forcedRehashWithPendingKey(uint32_t pendingKey) {
     vector<uint32_t> keys = collectKeys();
-    keys.push_back(key);
-    return rebuildTablesWithKeys(keys);
-}
+    keys.push_back(pendingKey);
 
-void CuckooHashing::maybeForceRefreshRehash() {
-    const long long rehashInterval = static_cast<long long>(tableSize) * tableSize;
-    if (insertionsSinceRehash < rehashInterval) {
-        return;
+    const double loadAfterInsert =
+        static_cast<double>(keys.size()) / (2.0 * static_cast<double>(tableSize));
+
+    if (loadAfterInsert > 5.0 / 12.0) {
+        resizeTables(tableSize * 2);
+        ++grewOnForcedRehash;
     }
 
-    const vector<uint32_t> keys = collectKeys();
-    if (!rebuildTablesWithKeys(keys)) {
-        throw std::runtime_error("Failed forced rehash after reaching the paper's r^2 insertion refresh threshold");
+    if (rebuildTablesWithKeys(keys)) {
+        return true;
+    }
+
+    while (true) {
+        resizeTables(tableSize * 2);
+        ++grewOnForcedRehash;
+        if (rebuildTablesWithKeys(keys)) {
+            return true;
+        }
+        if (tableSize >= (1 << 30)) {
+            return false;
+        }
     }
 }
 
@@ -294,102 +363,56 @@ int CuckooHashing::countOccupiedSlots(const vector<uint32_t>& table) const {
         [](uint32_t value) { return value != EMPTY_SLOT; }));
 }
 
-int CuckooHashing::getTableSize() const {
-    return tableSize;
+int CuckooHashing::getTableSize() const { return tableSize; }
+int CuckooHashing::getTableBits() const { return tableBits; }
+int CuckooHashing::getMaxLoop() const { return maxLoop; }
+int CuckooHashing::getElementCount() const { return elementCount; }
+int CuckooHashing::getOccupiedCountT1() const { return countOccupiedSlots(T1); }
+int CuckooHashing::getOccupiedCountT2() const { return countOccupiedSlots(T2); }
+int CuckooHashing::getInsertAttempts() const { return insertAttempts; }
+int CuckooHashing::getSuccessfulInsertions() const { return successfulInsertions; }
+int CuckooHashing::getDuplicateInsertions() const { return duplicateInsertions; }
+int CuckooHashing::getRehashCount() const { return rehashCount; }
+int CuckooHashing::getGrewOnForcedRehashCount() const { return grewOnForcedRehash; }
+int CuckooHashing::getFailedInsertions() const { return failedInsertions; }
+long long CuckooHashing::getInsertionsSinceRehash() const { return insertionsSinceRehash; }
+long long CuckooHashing::getDisplacementCount() const { return displacementCount; }
+
+array<uint64_t, CuckooHashing::MULTIPLIERS_PER_HASH> CuckooHashing::getHash1Multipliers() const {
+    return hash1Multipliers;
 }
 
-int CuckooHashing::getTableBits() const {
-    return tableBits;
-}
-
-int CuckooHashing::getMaxRehashLimit() const {
-    return maxRehashLimit;
-}
-
-int CuckooHashing::getElementCount() const {
-    return elementCount;
-}
-
-int CuckooHashing::getOccupiedCountT1() const {
-    return countOccupiedSlots(T1);
-}
-
-int CuckooHashing::getOccupiedCountT2() const {
-    return countOccupiedSlots(T2);
-}
-
-int CuckooHashing::getInsertAttempts() const {
-    return insertAttempts;
-}
-
-int CuckooHashing::getSuccessfulInsertions() const {
-    return successfulInsertions;
-}
-
-int CuckooHashing::getDuplicateInsertions() const {
-    return duplicateInsertions;
-}
-
-int CuckooHashing::getRehashCount() const {
-    return rehashCount;
-}
-
-int CuckooHashing::getFailedInsertions() const {
-    return failedInsertions;
-}
-
-int CuckooHashing::getInsertionsSinceRehash() const {
-    return insertionsSinceRehash;
-}
-
-long long CuckooHashing::getDisplacementCount() const {
-    return displacementCount;
-}
-
-array<uint64_t, CuckooHashing::UNIVERSAL_HASH_COEFFICIENTS> CuckooHashing::getHash1Coefficients() const {
-    return hash1Coefficients;
-}
-
-array<uint64_t, CuckooHashing::UNIVERSAL_HASH_COEFFICIENTS> CuckooHashing::getHash2Coefficients() const {
-    return hash2Coefficients;
+array<uint64_t, CuckooHashing::MULTIPLIERS_PER_HASH> CuckooHashing::getHash2Multipliers() const {
+    return hash2Multipliers;
 }
 
 double CuckooHashing::getLoadFactor() const {
-    const double totalSlots = static_cast<double>(2 * tableSize);
+    const double totalSlots = 2.0 * static_cast<double>(tableSize);
     return totalSlots == 0.0 ? 0.0 : static_cast<double>(elementCount) / totalSlots;
 }
 
 void CuckooHashing::printSummary() const {
-    const array<uint64_t, UNIVERSAL_HASH_COEFFICIENTS> h1 = getHash1Coefficients();
-    const array<uint64_t, UNIVERSAL_HASH_COEFFICIENTS> h2 = getHash2Coefficients();
-
     cout << "\n=== Cuckoo Hashing Summary ===" << endl;
     cout << "Parameters:" << endl;
-    cout << "  Table size per table (rounded to power of two): " << tableSize << endl;
-    cout << "  Table index bits q: " << tableBits << endl;
-    cout << "  Total slots: " << (2 * tableSize) << endl;
-    cout << "  Max displacement loop count: " << maxRehashLimit << endl;
-    cout << "  Empty slot sentinel: " << EMPTY_SLOT << endl;
-    cout << "  Universal hash prime p: " << UNIVERSAL_HASH_PRIME << endl;
-    cout << "  Universal hash family: h(x) = (sum a_l*x^l mod p) mod r" << endl;
-    cout << "  Polynomial degree: " << (UNIVERSAL_HASH_COEFFICIENTS - 1) << endl;
-    cout << "  Cuckoo hash 1 coefficients: "
-         << h1[0] << ", " << h1[1] << ", " << h1[2] << endl;
-    cout << "  Cuckoo hash 2 coefficients: "
-         << h2[0] << ", " << h2[1] << ", " << h2[2] << endl;
-    cout << "  Forced refresh threshold: r^2 = "
+    cout << "  Per-table size r: " << tableSize << " (q=" << tableBits << " bits)" << endl;
+    cout << "  Total slots (2r): " << (2 * tableSize) << endl;
+    cout << "  MaxLoop: " << maxLoop << endl;
+    cout << "  Hash family: XOR of " << MULTIPLIERS_PER_HASH
+         << " Dietzfelbinger multiply-shift functions per table" << endl;
+    cout << "  Forced refresh threshold r^2: "
          << (static_cast<long long>(tableSize) * tableSize) << " insertions" << endl;
 
     cout << "Runtime statistics:" << endl;
     cout << "  Active keys: " << elementCount << endl;
     cout << "  Occupied slots in T1: " << getOccupiedCountT1() << endl;
     cout << "  Occupied slots in T2: " << getOccupiedCountT2() << endl;
-    cout << "  Load factor: " << fixed << setprecision(4) << getLoadFactor() << endl;
+    cout << "  Load factor n/(2r): " << fixed << setprecision(4) << getLoadFactor() << endl;
     cout << "  Insert attempts: " << insertAttempts << endl;
     cout << "  Successful insertions: " << successfulInsertions << endl;
     cout << "  Duplicate insertions ignored: " << duplicateInsertions << endl;
     cout << "  Failed insertions: " << failedInsertions << endl;
     cout << "  Rehash attempts: " << rehashCount << endl;
+    cout << "  Grew on forced rehash (>5/12): " << grewOnForcedRehash << endl;
     cout << "  Insertions since last rehash: " << insertionsSinceRehash << endl;
     cout << "  Key displacements: " << displacementCount << endl;
 }

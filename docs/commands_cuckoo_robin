@@ -1,0 +1,40 @@
+# Focused Cuckoo vs Robin Hood comparison commands.
+#
+# Each line is:
+#   ./benchmark_cuckoo_robin <input> <n> <3n> <total_slots> <maxLoop> \
+#                            <maxRehashSafety> <algo> <interrupt_cycles>
+#
+# `algo` may be cuckoo, robinhood (alias: robin), or both.
+# Same equilibrium workload as Pagh & Rodler §4.4: n inserts then 3n rounds of
+# {unsuccessful lookup, successful lookup, delete, insert}. total_slots = 4n
+# keeps the steady-state load factor at ~1/4.
+#
+# To average across 10 runs, drive these via:
+#   python3 run_benchmark_commands.py \
+#       --commands-file docs/commands_cuckoo_robin \
+#       --output docs/cuckoo_robin_results.csv --runs 10
+#./benchmark_cuckoo_robin DiehardCDROM-master/CD-ROM/bits.01 256 768 1024 64 100000 both 5000
+#./benchmark_cuckoo_robin DiehardCDROM-master/CD-ROM/bits.01 1024 3072 4096 64 100000 both 5000
+#./benchmark_cuckoo_robin DiehardCDROM-master/CD-ROM/bits.01 4096 12288 16384 64 100000 both 5000
+#./benchmark_cuckoo_robin DiehardCDROM-master/CD-ROM/bits.01 16384 49152 65536 64 100000 both 5000
+#./benchmark_cuckoo_robin DiehardCDROM-master/CD-ROM/bits.01 65536 196608 262144 64 100000 both 5000
+#./benchmark_cuckoo_robin DiehardCDROM-master/CD-ROM/bits.01 262144 786432 1048576 64 100000 both 5000
+#./benchmark_cuckoo_robin DiehardCDROM-master/CD-ROM/bits.01 1048576 3145728 4194304 64 100000 both 5000
+#./benchmark_cuckoo_robin DiehardCDROM-master/CD-ROM/bits.01 4194304 12582912 16777216 64 100000 both 5000
+
+
+./benchmark_cuckoo_robin DiehardCDROM-master/CD-ROM/ 256 768 1024 64 100000 both 5000
+./benchmark_cuckoo_robin DiehardCDROM-master/CD-ROM/ 512 1536 2048 64 100000 both 5000
+./benchmark_cuckoo_robin DiehardCDROM-master/CD-ROM/ 1024 3072 4096 64 100000 both 5000
+./benchmark_cuckoo_robin DiehardCDROM-master/CD-ROM/ 2048 6144 8192 64 100000 both 5000
+./benchmark_cuckoo_robin DiehardCDROM-master/CD-ROM/ 4096 12288 16384 64 100000 both 5000
+./benchmark_cuckoo_robin DiehardCDROM-master/CD-ROM/ 8192 24576 32768 64 100000 both 5000
+./benchmark_cuckoo_robin DiehardCDROM-master/CD-ROM/ 16384 49152 65536 64 100000 both 5000
+./benchmark_cuckoo_robin DiehardCDROM-master/CD-ROM/ 32768 98304 131072 64 100000 both 5000
+./benchmark_cuckoo_robin DiehardCDROM-master/CD-ROM/ 65536 196608 262144 64 100000 both 5000
+./benchmark_cuckoo_robin DiehardCDROM-master/CD-ROM/ 131072 393216 524288 64 100000 both 5000
+./benchmark_cuckoo_robin DiehardCDROM-master/CD-ROM/ 262144 786432 1048576 64 100000 both 5000
+./benchmark_cuckoo_robin DiehardCDROM-master/CD-ROM/ 524288 1572864 2097152 64 100000 both 5000
+./benchmark_cuckoo_robin DiehardCDROM-master/CD-ROM/ 1048576 3145728 4194304 64 100000 both 5000
+./benchmark_cuckoo_robin DiehardCDROM-master/CD-ROM/ 2097152 6291456 8388608 64 100000 both 5000
+./benchmark_cuckoo_robin DiehardCDROM-master/CD-ROM/ 4194304 12582912 16777216 64 100000 both 5000

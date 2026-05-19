@@ -11,52 +11,56 @@ using std::uint32_t;
 using std::uint64_t;
 using std::string;
 using std::vector;
-using std::mt19937; // MZ random number generator
-using std::random_device; // for generating random numbers
+using std::mt19937;
+using std::random_device;
 
 class CuckooHashing {
 private:
-   /* 
-   MZ2 -- hashing tables size: each should be 10% 20% larger than half number of the elements 
-   as replorted in the paper
-   */ 
-   
-   vector<uint32_t> T1, T2;
-   int maxRehashLimit; // maximum number of rehashes allowed
-   const int tableSize;
-   const int tableBits;
-   random_device randomDevice;
-   mt19937 randomNumGen; 
-   int elementCount;
-   int insertAttempts;
-   int successfulInsertions;
-   int duplicateInsertions;
-   int rehashCount;
-   int failedInsertions;
-   int insertionsSinceRehash;
-   long long displacementCount;
-   static constexpr uint32_t EMPTY_SLOT = 0;
-   static constexpr uint64_t UNIVERSAL_HASH_PRIME = 4294967311ULL;
-   static constexpr std::size_t UNIVERSAL_HASH_COEFFICIENTS = 3;
+    static constexpr uint32_t EMPTY_SLOT = 0;
+    
+    static constexpr std::size_t MULTIPLIERS_PER_HASH = 3;
 
-   array<uint64_t, UNIVERSAL_HASH_COEFFICIENTS> hash1Coefficients;
-   array<uint64_t, UNIVERSAL_HASH_COEFFICIENTS> hash2Coefficients;
+    vector<uint32_t> T1, T2;
+    int maxLoop;
+    int tableSize;
+    int tableBits;
+    random_device randomDevice;
+    mt19937 randomNumGen;
+    int elementCount;
+    int insertAttempts;
+    int successfulInsertions;
+    int duplicateInsertions;
+    int rehashCount;
+    int grewOnForcedRehash;
+    int failedInsertions;
+    long long insertionsSinceRehash;
+    long long displacementCount;
+    long long lastInsertCellAccesses;
+    long long insertCellAccessSum;
+    long long sampledInsertCount;
 
-   int computeTableBits(int size) const;
-   int nextPowerOfTwo(int value) const;
-   uint32_t normalizeKey(int key) const;
-   uint64_t randomCoefficient();
-   uint32_t polynomialUniversalHash(uint32_t key, const array<uint64_t, UNIVERSAL_HASH_COEFFICIENTS>& coefficients) const;
-   void initializeHashParameters();
-   bool placeKeyWithoutRehash(uint32_t key);
-   bool rebuildTablesWithKeys(const vector<uint32_t>& keys);
-   bool rehashWithPendingKey(uint32_t key);
-   void maybeForceRefreshRehash();
-   vector<uint32_t> collectKeys() const;
-   int countOccupiedSlots(const vector<uint32_t>& table) const;
+    array<uint64_t, MULTIPLIERS_PER_HASH> hash1Multipliers;
+    array<uint64_t, MULTIPLIERS_PER_HASH> hash2Multipliers;
+
+    static int computeTableBits(int size);
+    static int nextPowerOfTwo(int value);
+    static uint32_t normalizeKey(int key);
+    uint64_t randomOddMultiplier();
+    uint32_t multiplicativeHash(
+        uint32_t key,
+        const array<uint64_t, MULTIPLIERS_PER_HASH>& multipliers) const;
+    void initializeHashParameters();
+    bool placeKeyInLoop(uint32_t key);
+    bool rebuildTablesWithKeys(const vector<uint32_t>& keys);
+    bool forcedRehashWithPendingKey(uint32_t pendingKey);
+    void resizeTables(int newTableSize);
+    vector<uint32_t> collectKeys() const;
+    int countOccupiedSlots(const vector<uint32_t>& table) const;
+    int hash1Of(uint32_t key) const;
+    int hash2Of(uint32_t key) const;
 
 public:
-    CuckooHashing(int tableSize, int maxRehashLimit);
+    CuckooHashing(int tableSize, int maxLoop);
     void insert(int key);
     void remove(int key);
     bool search(int key);
@@ -66,7 +70,7 @@ public:
     int hashFunc2(int key);
     int getTableSize() const;
     int getTableBits() const;
-    int getMaxRehashLimit() const;
+    int getMaxLoop() const;
     int getElementCount() const;
     int getOccupiedCountT1() const;
     int getOccupiedCountT2() const;
@@ -74,11 +78,15 @@ public:
     int getSuccessfulInsertions() const;
     int getDuplicateInsertions() const;
     int getRehashCount() const;
+    int getGrewOnForcedRehashCount() const;
     int getFailedInsertions() const;
-    int getInsertionsSinceRehash() const;
+    long long getInsertionsSinceRehash() const;
     long long getDisplacementCount() const;
-    array<uint64_t, UNIVERSAL_HASH_COEFFICIENTS> getHash1Coefficients() const;
-    array<uint64_t, UNIVERSAL_HASH_COEFFICIENTS> getHash2Coefficients() const;
+    long long getLastInsertCellAccesses() const;
+    double getAverageInsertCellAccesses() const;
+    void resetInsertCellAccessStats();
+    array<uint64_t, MULTIPLIERS_PER_HASH> getHash1Multipliers() const;
+    array<uint64_t, MULTIPLIERS_PER_HASH> getHash2Multipliers() const;
     double getLoadFactor() const;
     void printSummary() const;
     ~CuckooHashing();
