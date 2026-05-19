@@ -79,9 +79,7 @@ The script skips blank lines and commented lines in the command file.
 Useful extra flags:
 
 - `--output-dir <path>` overrides the default output folder.
-- `--no-fig7` skips the cache miss sweep (still plots one if `cache_misses_data.csv` already exists in the folder).
 - `--no-plot` writes only the CSV files and skips plotting.
-- `--fig7-per-table-size`, `--fig7-warmup`, `--fig7-samples` tune the cache miss sweep size.
 
 After running, you should find these files inside `docs/cuckoo_robin_graphs/`:
 
@@ -100,8 +98,6 @@ The plotting step happens automatically as part of `run_benchmark_commands.py`. 
 python3 plot_paper_graphs.py \
     --output-dir docs/cuckoo_robin_graphs \
     --csv docs/cuckoo_robin_graphs/cuckoo_robin_results.csv \
-    --fig7-algorithms cuckoo,robinhood \
-    --fig7-title "Cache Misses: Cuckoo vs Robin Hood"
 ```
 
 The `--output-dir` flag is the only one you usually need. The script puts every PNG into that folder.
